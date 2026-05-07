@@ -1,9 +1,31 @@
-from argparse import ArgumentParser
-from pathlib import Path
 from typing import List, Tuple
 
-import numpy as np
+def _parse_edges(csv_text: str) -> List[List[str]]:
+    if not csv_text:
+        return []
+    
+    lines = [ln.strip() for ln in csv_text.replace('\r\n', '\n').replace('\r', '\n').split('\n')]
+    non_empty_lines = [ln for ln in lines if ln != '']
 
+    edges = []
+    
+    if len(non_empty_lines) == 1:
+        items = [t.strip() for t in non_empty_lines[0].split(',') if t.strip() != '']
+        for i in range(0, len(items) - 1, 2):
+            edges.append([items[i], items[i + 1]])
+    else:
+        for ln in non_empty_lines:
+            parts = [t.strip() for t in ln.split(',')]
+            if len(parts) >= 2:
+                edges.append([parts[0], parts[1]])
+                
+    return edges
+
+def _sort_vertices(vertices_set: set) -> List[str]:
+    try:
+        return sorted(list(vertices_set), key=int)
+    except ValueError:
+        return sorted(list(vertices_set))
 
 def main(s: str, e: str) -> Tuple[
     List[List[bool]],
@@ -12,78 +34,80 @@ def main(s: str, e: str) -> Tuple[
     List[List[bool]],
     List[List[bool]]
 ]:
-    path = Path(s)
-    if path.exists() and path.is_file():
-        with open(path, "r") as f:
-            data = f.read().strip()
-    else:
-        data = s.strip()
+    edges = _parse_edges(s)
 
-    edges = []
-    nodes = set()
-    for line in data.split("\\n"):
-        u, v = line.strip().split(",")
-        edges.append((u, v))
-        nodes.update([u, v])
+    vertices_set = set()
+    for u, v in edges:
+        vertices_set.add(u)
+        vertices_set.add(v)
 
-    nodes.add(e)
+    vertices_set.add(e)
 
-    nodes_list = sorted(nodes)
-    node_to_idx = {node: idx for idx, node in enumerate(nodes_list)}
-    n = len(nodes_list)
+    vertices = _sort_vertices(vertices_set)
+    n = len(vertices)
+    
+    if n == 0:
+        return [], [], [], [], []
 
-    r1 = np.zeros((n, n), dtype=bool)
-    r2 = np.zeros((n, n), dtype=bool)
-    r3 = np.zeros((n, n), dtype=bool)
-    r4 = np.zeros((n, n), dtype=bool)
-    r5 = np.zeros((n, n), dtype=bool)
+    index_by_vertex = {v: i for i, v in enumerate(vertices)}
+
+    adj = [[False] * n for _ in range(n)]
+    children = [[] for _ in range(n)]
+    parent = [-1] * n
 
     for u, v in edges:
-        i, j = node_to_idx[u], node_to_idx[v]
-        r1[i, j] = True
-        r2[j, i] = True
+        ui = index_by_vertex[u]
+        vi = index_by_vertex[v]
+        adj[ui][vi] = True
+        children[ui].append(vi)
+        parent[vi] = ui
 
-    closure = r1.copy()
-    for k in range(n):
-        for i in range(n):
-            for j in range(n):
-                closure[i, j] = closure[i, j] or (closure[i, k] and closure[k, j])
-    r3 = closure
+    r1 = [[adj[i][j] for j in range(n)] for i in range(n)]
 
-    r4 = r3.T
+    r2 = [[r1[j][i] for j in range(n)] for i in range(n)]
 
-    from collections import defaultdict
-    parent_children = defaultdict(list)
-    for u, v in edges:
-        parent_children[u].append(v)
+    descendants = [set() for _ in range(n)]
 
-    for parent, children in parent_children.items():
-        if len(children) > 1:
-            indices = [node_to_idx[child] for child in children]
-            for i in indices:
-                for j in indices:
+    def dfs(start: int, current: int):
+        for child in children[current]:
+            descendants[start].add(child)
+            dfs(start, child)
+
+    for i in range(n):
+        dfs(i, i)
+
+    r3 = [[False] * n for _ in range(n)]
+    for i in range(n):
+        for j in descendants[i]:
+            if not adj[i][j]:
+                r3[i][j] = True
+
+    r4 = [[r3[j][i] for j in range(n)] for i in range(n)]
+
+    r5 = [[False] * n for _ in range(n)]
+    siblings_by_parent = [[] for _ in range(n)]
+    
+    for node_idx in range(n):
+        p = parent[node_idx]
+        if p != -1:
+            siblings_by_parent[p].append(node_idx)
+            
+    for sibs in siblings_by_parent:
+        if len(sibs) >= 2:
+            for i in sibs:
+                for j in sibs:
                     if i != j:
-                        r5[i, j] = True
+                        r5[i][j] = True
 
-    return (
-        r1.tolist(),
-        r2.tolist(),
-        r3.tolist(),
-        r4.tolist(),
-        r5.tolist()
-    )
-
+    return r1, r2, r3, r4, r5
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Process tree relations")
-    parser.add_argument("s", type=str, help="CSV string or path to CSV file")
-    parser.add_argument("e", type=str, help="Root node identifier")
-    args = parser.parse_args()
-
-    result = main(args.s, args.e)
-    relations = ["r1", "r2", "r3", "r4", "r5"]
-    for rel, matrix in zip(relations, result):
-        print(f"{rel}:")
+    test_str = "1,2\n1,3\n3,4\n3,5\n5,6\n6,7"
+    root = "1"
+    matrices = main(test_str, root)
+    
+    for idx, matrix in enumerate(matrices, 1):
+        print(f"Матрица R{idx}:")
         for row in matrix:
-            print([int(x) for x in row])
+            print([int(val) for val in row])
         print()
